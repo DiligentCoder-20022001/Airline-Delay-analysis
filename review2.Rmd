@@ -1,0 +1,617 @@
+---
+title: "Airlines schedule analysis"
+author: "Siddharth.S.Chandran - 18BCE1003"
+date: "07/09/2020"
+output: html_document
+---
+1. Loading the packages and libraries
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(stringr)
+library(tidyr)
+library(plotly)
+library(sqldf)
+```
+
+2. Loading the datasets - The datasets contain blank values.Hence converting the blank values to NA on importing so as to not encounter problems in the future.
+
+```{r}
+flights<-read.csv("C:/Users/Siddharth S Chandran/Desktop/airplanes.csv",header=T,na.strings=c("","NA"))
+airports<-read.csv("C:/Users/Siddharth S Chandran/Desktop/cities.csv",header=T,na.strings=c("","NA"))
+airlines<-read.csv("C:/Users/Siddharth S Chandran/Desktop/companies.csv",header=T,na.strings=c("","NA"))
+```
+
+
+
+3. Clean the Data
+
+Check out the look up tables first..
+Although we have 3 airports observations that have latitude and longtitude values NA we keep them since they are still needed for flights data.
+```{r}
+sapply(airports, function(x) sum(is.na(x))) / nrow(airports) * 100
+sapply(airlines, function(x) sum(is.na(x))) / nrow(airlines) * 100
+```
+4. List the unique values of airport names..
+   Numeric values come up which doesn't match with the airport look up table.
+```{r results='hide'}
+unique(flights$ORIGIN_AIRPORT)
+unique(flights$DESTINATION_AIRPORT)
+```
+.
+5. Eliminate numeric airport codes by joining flights with airports and create a single table which contains airport and airline lookup values as well.
+```{r}
+sql <- "SELECT 
+f.*,
+al.AIRLINE AS AIRLINE_NAME,
+a1.AIRPORT as ORIGIN_AIRPORT_NAME,
+a1.CITY as ORIGIN_CITY,
+a1.STATE as ORIGIN_STATE,
+a1.LATITUDE as ORIGIN_LATITUDE,
+a1.LONGITUDE as ORIGIN_LONGITUDE,
+a2.AIRPORT as DESTINATION_AIRPORT_NAME,
+a2.CITY as DESTINATION_CITY,
+a2.STATE as DESTINATION_STATE,
+a2.LATITUDE as DESTINATION_LATITUDE,
+a2.LONGITUDE as DESTINATION_LONGITUDE
+FROM 
+flights f JOIN 
+airports a1 ON 
+f.ORIGIN_AIRPORT = a1.IATA_CODE JOIN 
+airports a2 ON
+f.DESTINATION_AIRPORT = a2.IATA_CODE join
+airlines al on f.AIRLINE=al.IATA_CODE"
+
+flights <- sqldf(sql)
+```
+.
+6. Create factor variables from categorical variables
+```{r}
+flights$DAY_F <-factor(flights$DAY)
+flights$DAY_OF_WEEK_F <-factor(flights$DAY_OF_WEEK)
+flights$MONTH_F <-factor(flights$MONTH)
+flights$YEAR_F <-factor(flights$YEAR)
+flights$CANCELLED_F <-factor(flights$CANCELLED)
+flights$AIRLINE_F <-factor(flights$AIRLINE)
+```
+.
+7. Detect percentage of NA values for each variable.
+```{r}
+na_percentages <- sapply(flights, function(x) sum(is.na(x)))/nrow(flights)*100
+sort(format(round(na_percentages, 4), nsmall = 4))
+```
+8. Scheduled_time is expected to be filled for all rows. Omit Scheduled_time NA rows.
+```{r}
+flights<-subset(flights, !(is.na(flights$SCHEDULED_TIME)))
+```
+.
+9. Get Non-Cancelled Flights
+```{r}
+net_flights <- subset(flights, flights$CANCELLED==0)
+```
+10. Detect NA percentage of Non-Cancelled flights and omit rows having NA AIR_TIME
+```{r}
+net_flights <- subset(net_flights, !(is.na(net_flights$AIR_TIME)))
+na_percentages <- sapply(net_flights, function(x) sum(is.na(x))) / nrow(net_flights) * 100
+sort(format(round(na_percentages, 4), nsmall = 4))
+```
+
+
+
+.
+11. Let's first take a look at the market shares of airlines to have a general understanding of flight volumes for each airline company.
+.
+```{r  }
+marketShare <- flights %>% 
+  group_by(AIRLINE) %>%
+  dplyr::summarise(Count = n(),
+            mean_ARRIVAL_DELAY = mean(ARRIVAL_DELAY),
+            median_ARRIVAL_DELAY = median(ARRIVAL_DELAY),
+            min_ARRIVAL_DELAY = min(ARRIVAL_DELAY),
+            max_ARRIVAL_DELAY = max(ARRIVAL_DELAY),
+            mean_DEPARTURE_DELAY = mean(DEPARTURE_DELAY),
+            median_DEPARTURE_DELAY = median(DEPARTURE_DELAY),
+            min_DEPARTURE_DELAY = min(DEPARTURE_DELAY),
+            max_DEPARTURE_DELAY = max(DEPARTURE_DELAY)
+  ) %>% arrange(desc(Count))
+
+
+plot_ly(marketShare, labels = ~AIRLINE, values = ~Count, type = 'pie',
+        textposition = 'inside',
+        textinfo = 'label+percent',
+        insidetextfont = list(color = '#FFFFFF'),
+        hoverinfo = 'text',
+        marker = list(
+          line = list(color = '#FFFFFF', width = 1)),
+        showlegend = FALSE)
+```
+
+
+
+.
+12. Let's filter the cancelled-flights first
+```{r}
+cancelled_flights <- subset(flights, flights$CANCELLED==1)
+```
+13. Then check out the NA values in cancelled_flights
+```{r}
+na_percentages <- sapply(cancelled_flights, function(x) sum(is.na(x))) / nrow(cancelled_flights) * 100
+sort(format(round(na_percentages, 4), nsmall = 4))
+```
+.
+
+### General Evaluation
+
+14. Percentage of cancelled flights among all flights is 1.6
+```{r}
+nrow(cancelled_flights)/nrow(flights)*100
+```
+.
+15. And we see that among cancelled flights more than half of the cancellations are weather related:
+```{r}
+cancellation_reason <- summary(factor(cancelled_flights$CANCELLATION_REASON))
+cancellation_reason[2]/sum(cancellation_reason)*100 #Weather caused cancellation
+```
+16. More than 1 out 4 cancels airline company related:
+```{r}
+cancellation_reason[1]/sum(cancellation_reason)*100 #Airline caused cancellation
+```
+17. Security related cancellations are very low and consist of the smallest part:
+```{r}
+cancellation_reason[4]/sum(cancellation_reason)*100 #Security caused cancellation
+```
+18. The rest is air system related:
+```{r}
+cancellation_reason[3]/sum(cancellation_reason)*100 #Air system caused cancellation
+```
+.
+
+19. 
+When we filter the airline related cancellations and check out the min - max frequencies, at first glance it looks like; 
+*WN (Southwest Airlines Co.) has the worst score (1 out of 4) of airline related cancelattions.
+*VX, HA, F9 and AS has the least airline related cancellations
+```{r}
+temp <- subset(cancelled_flights, factor(cancelled_flights$CANCELLATION_REASON)=='A')
+min(summary(temp$AIRLINE_F))/nrow(temp)*100
+max(summary(temp$AIRLINE_F))/nrow(temp)*100
+```
+
+
+20.
+But when we compare the cancellation rates instead of cancellation numbers the picture chanes a lot.
+Cancellation rates are calculated for each airline by dividing the airline related cancellation numbers to total number of flights
+```{r}
+airline_cancellation_fq <- summary(temp$AIRLINE_F)
+all_cancellation_fq <- summary(cancelled_flights$AIRLINE_F)
+all_flight_fq <- summary(flights$AIRLINE_F)
+
+sort(airline_cancellation_fq / all_cancellation_fq, decreasing = TRUE)
+sort(all_cancellation_fq / all_flight_fq, decreasing = TRUE)
+airline_cancellation_score <- airline_cancellation_fq / all_flight_fq #Save cancellation rate as airline cancellation score for later use
+airline_cancellation_rates <- sort(airline_cancellation_fq / all_flight_fq, decreasing = TRUE)
+
+remove(cancelled_flights, airline_cancellation_fq, all_cancellation_fq, all_flight_fq, temp)
+
+cols <- colorRampPalette(c('blue','green','red','yellow'))(14)
+```
+21. Below is the barplot of cancellation rates by airline company:
+```{r  }
+barplot(airline_cancellation_rates, las = 1, col = cols, xlab = "Airline Company Codes", ylab = "Cancellation Rates", main="Histogram of Cancellation Rates")
+```
+
+22. Result: 
+So according to cancellations rates instead of cancellation numbers:
+* MQ has the worst / highest cancellation rate.
+* DL has the best / lowest cancellation rate by far. AS, HA and VX also have low cancellation rates.
+
+Since the ratios are so low we take logaritms.
+From logarithm graph we see that HA and F9 has the best ratios.
+```{r  }
+ggplot(data=flights, aes(x=flights$AIRLINE, fill=flights$CANCELLED_F)) +
+  geom_histogram(stat = "Count",position = "dodge", col="red") +
+  labs(title="Histogram for Airline") +
+  labs(x="Airline", y="Number of Flights") + scale_x_discrete() +
+  scale_y_log10() +
+  labs(fill='Cancelled or Not')
+```
+***
+23. DELAY ANALYSIS BY TIME
+```{r}
+flights$status<-'ON TIME'
+flights$status[flights$DEPARTURE_DELAY>0] <-'DEPARTURE DELAY'
+flights$status[flights$CANCELLED==1] <-'CANCELLED FLIGHTS'
+flights$status[flights$ARRIVAL_DELAY>0 & (flights$ARRIVAL_DELAY-flights$DEPARTURE_DELAY)>0 & flights$DEPARTURE_DELAY>0] <-'DEPR & ARVL_DELAY'
+flights$status[flights$ARRIVAL_DELAY>0 & flights$DEPARTURE_DELAY<=0] <-'ARRIVAL_DELAY'
+flights$status<-factor(flights$status)
+```
+
+24. Bar plots for months according to flight status.
+Nearly half of the total flights have some sort of delays
+```{r  }
+ggplot(flights,aes(x=MONTH_F,fill=status),binwidth=12) + 
+  geom_bar(position = "fill") + 
+  ggtitle("Flights by Months According to Flights Status")
+```
+
+25. Frequency of departure delay time intervals
+```{r}
+flightsDepDelay<-subset(flights,flights$DEPARTURE_DELAY>0)
+flightsDepDelay$DelayTimeInterval<-cut(flightsDepDelay$DEPARTURE_DELAY,
+                                        breaks=c(0,10,30,60,90,120,180,1988),
+                                        labels=c("(0-10]","(10-30]","(30-60]","(60-90]","(90-120]","(120-180]","(180-1988]")
+)
+```
+
+26. Dividing the delays by time intervals we see that **almost half of departure delays are less than 10 mins.**
+
+```{r  }
+ggplot(flightsDepDelay,aes(x=MONTH_F,fill=DelayTimeInterval)) + 
+  geom_bar(position = "fill") + 
+  scale_y_continuous(breaks=seq(0,1,0.1))
+ggtitle("Departure Delay Flights by Months According To DelayTime Interval")
+
+remove(flightsDepDelay)
+```
+
+```{r}
+net_flights$DEP_HOUR <- NA
+net_flights$DEP_HOUR <- as.integer(net_flights$DEPARTURE_TIME / 100)
+
+net_flights$LATENCY <- NA
+net_flights$LATENCY <- case_when(
+  net_flights$ARRIVAL_DELAY <= 5 ~"On Time (0-5 mins)",
+  net_flights$ARRIVAL_DELAY > 5 & net_flights$ARRIVAL_DELAY <= 15 ~"Small Delay (5-15 mins)",
+  net_flights$ARRIVAL_DELAY > 15 ~ "Large Delay (> 15 mins)" )
+```
+
+27. Below graph shows us that **departures start from 5 am, peak at 6 am and decrease regularly until mid-night.**
+Large delays increase regularly starting **from 5 am to midnight.**
+Small delays stay almost the same **until 8 pm** and **start decreasing after 8 pm till midnight.**
+```{r  }
+ggplot(data=net_flights, aes(x=factor(net_flights$DEP_HOUR),fill=factor(net_flights$LATENCY))) + 
+  geom_histogram(stat = "Count",position = "dodge", col="red") +
+  labs(title="Histogram for Airline") +
+  labs(x="Departure Hours", y="Number of Flights") + scale_x_discrete()
+```
+
+
+
+28. Based on Delay Count
+
+
+
+Filter Late, Ontime (including early) and early departed flights.
+```{r}
+d_late_flights <- subset(net_flights, net_flights$DEPARTURE_DELAY>0)
+d_ontime_flights <- subset(net_flights, net_flights$DEPARTURE_DELAY<=0)
+d_early_flights <- subset(net_flights, net_flights$DEPARTURE_DELAY <= -5)
+```
+
+29. More than **1 out of 3 flights** has departure delays.
+Assuming flights departing **5 or more minutes earlier** as early departing flights more than **1 out of 4 flights depart early.**
+
+
+```{r}
+nrow(d_late_flights)/nrow(net_flights)*100
+nrow(d_early_flights)/nrow(net_flights)*100
+```
+
+```{r  }
+remove(d_early_flights, d_ontime_flights)
+```
+
+30. Choose the flights whose departures delayed due to airline company.
+
+```{r}
+temp <- subset(d_late_flights, !is.na(d_late_flights$AIRLINE_DELAY))
+```
+
+31. Airline delays and late aircraft delays are categorised separately in the data set but for this analysis we assume late aircraft delay is also a sort of airline delay since if the delay caused by aircraft is owned by that airline company. With this point of view When we check out the data we see that if late aircraft delay is not NA then airline delay is not NA too. Which makes filtering airline related delays easier for this point of view.
+
+
+At first glance we think that;
+WN (Southwest Airlines Co.) has the worst score (1 out of 3) of airline related delay NUMBER / COUNT (not time)
+AS, VX, HA and NK has the least airline related delay NUMBER / COUNT (not time)
+
+```{r}
+temp <- subset(net_flights, !is.na(net_flights$AIRLINE_DELAY))
+summary(temp$AIRLINE_F)
+min(summary(temp$AIRLINE_F))/nrow(temp)*100
+max(summary(temp$AIRLINE_F))/nrow(temp)*100
+```
+
+32.
+But when we compare the delay rates instead of delay numbers the result changes a lot.
+(Delay rates are calculated for each airline by comparing the airline related delay numbers to total number of flights)
+
+```{r}
+airline_delay_fq <- summary(temp$AIRLINE_F) #delay numbers for airline firms
+all_flight_fq <- summary(net_flights$AIRLINE_F) #flight numbers for airline firms
+
+airline_delay_score <- airline_delay_fq / all_flight_fq #save airline delay rates for later use
+airline_delay_rates <- sort(airline_delay_fq / all_flight_fq, decreasing = TRUE)
+cols <- colorRampPalette(c('blue','green','red','yellow'))(14)
+```
+
+33. Barplot of delay count rates by airline firm:
+```{r }
+barplot(airline_delay_rates, las = 1, space = 0, col = cols, xlab = "Airline Company Codes", ylab = "Delay Rates", main="Histogram of Delay Count Rates")
+
+remove(airline_delay_fq, airline_delay_rates, all_flight_fq)
+```
+
+34. Result : 
+* So when we check out the delay rates instead of delay numbers we notice that NK has the worst / highest delay rate and HA, AS, DL has the best / least delay rate.
+* Here we have to mention about DL, which had the least cancellation rate by far. DL also has a very low departure delay rate. This shows that DL has a very good airline score considering the cancellation and departure delay rates compared to other airlines.
+
+
+35. Based on Departure Delay Time
+
+Sum up the departure delay times for each company.
+
+```{r}
+airline_depdelay_time <- aggregate(temp$DEPARTURE_DELAY, by=list(Airline=temp$AIRLINE), FUN=sum)
+airline_flight_fq <- summary(net_flights$AIRLINE_F)
+```
+
+36. Find the departure delay times for each company rated to total number of flights
+
+```{r}
+rated_depdelay_time <- data.frame(AIRLINE=c(names(airline_flight_fq)), DEP_DELAY_RATE=c(airline_depdelay_time[2] / data.frame(AIRLINE=c(names(airline_flight_fq)), FLIGHT_FREQ=c(as.numeric(airline_flight_fq)))[2]))
+
+airline_rated_depdelay_time <- as.numeric(unlist(rated_depdelay_time)[15:28])
+names(airline_rated_depdelay_time) <-names(airline_flight_fq)
+airline_depdelay_score <- airline_rated_depdelay_time
+airline_rated_depdelay_time <- sort(airline_rated_depdelay_time, decreasing = TRUE)
+cols <- colorRampPalette(c('blue','green','red','yellow'))(14);
+```
+
+We see that NK, F9, UA has the longest departure delay times
+HA, AS, US and DL has the least departure delay times
+
+```{r  }
+barplot(airline_rated_depdelay_time, las = 1, space = 0, col = cols, xlab = "Airline Company Codes", ylab = "Rated Departure Delay Times (mins)", main="Histogram of Rated Departure Delay Times")
+```
+
+37. ARRIVAL ANALYSIS BY AIRLINE COMPANY
+
+Filter Late, Ontime (including early) and early arrived flights.
+
+```{r}
+a_late_flights <- subset(net_flights, net_flights$ARRIVAL_DELAY > 0)
+#a_ontime_flights <- subset(net_flights, net_flights$ARRIVAL_DELAY <= 0)
+a_early_flights <- subset(net_flights, net_flights$ARRIVAL_DELAY <= -5)
+```
+
+38. More than **1 out of 3 flights** has arrival delays.
+Assuming flights arriving **5 or more minutes earlier** as early arriving flights more than **half of the flights arrive early.**
+```{r}
+nrow(a_late_flights)/nrow(net_flights)*100
+nrow(a_early_flights)/nrow(net_flights)*100
+
+remove(a_early_flights, temp)
+```
+
+39.
+Among late arriving flights choose the ones which arrived late due to airline company.
+```{r}
+temp <- subset(a_late_flights, !is.na(a_late_flights$AIRLINE_DELAY))
+```
+
+40. Sum up the delay times for each company.
+```{r}
+airline_arrdelay_time <- aggregate(temp$ARRIVAL_DELAY, by=list(Airline=temp$AIRLINE), FUN=sum)
+airline_flight_fq <- summary(net_flights$AIRLINE_F)
+```
+
+41. Find the arrival delay times for each company rated to total number of flights.
+
+```{r}
+rated_arrdelay_time <- data.frame(AIRLINE=c(names(airline_flight_fq)), ARR_DELAY_RATE=c(airline_arrdelay_time[2] / data.frame(AIRLINE=c(names(airline_flight_fq)), FLIGHT_FREQ=c(as.numeric(airline_flight_fq)))[2]))
+remove(temp)
+airline_rated_arrdelay_time <- as.numeric(unlist(rated_arrdelay_time)[15:28])
+names(airline_rated_arrdelay_time) <-names(airline_flight_fq)
+airline_arrdelay_score <- as.numeric(airline_rated_arrdelay_time)
+airline_rated_arrdelay_time <- sort(airline_rated_arrdelay_time, decreasing = TRUE)
+cols <- colorRampPalette(c('blue','green','red','yellow'))(14);
+```
+
+42.
+
+We see that NK, F9 and UA have the longest departure delay times.
+HA, AS, US and DL has the least departure delay times.
+```{r  }
+barplot(airline_rated_arrdelay_time, las=1,col = cols,xlab = "Airline Company Codes", ylab = "Rated Arrival Delay Times (mins)", main="Histogram of Rated Arrival Delay Times")
+```
+
+43. Below graph reflects the total airline score based on cancellation count, delay count, departure delay time and arrival delay time. The rank in this graph shows us the delay & cancellation performances of airline companies.
+
+```{r  }
+barplot(sort(airline_arrdelay_score+airline_cancellation_score+airline_delay_score+airline_depdelay_score, decreasing = TRUE), las = 1, col = cols, xlab = "Airline Company Codes", ylab = "Delay Rates", main="Histogram of Delay Rates")
+```
+
+
+44. On the below graph, we see that the airline companies which have lower arrival delay medians also have smaller IQR, thus bigger valued airline companies have unstable arrival delay times.
+
+```{r  }
+ggplot(subset(net_flights, ARRIVAL_DELAY>=0), aes(x=reorder(AIRLINE, ARRIVAL_DELAY, FUN=median), y=ARRIVAL_DELAY, fill=AIRLINE)) +
+  geom_boxplot() +
+  coord_cartesian(ylim=c(0,50)) +
+  labs(x = 'Airline', y = 'Arrival Delay',
+       title = 'Arrival Delay vs. Airlines')
+```
+
+45. This graph shows that most of the delays decrease during year except **United Airlines** has an apparent increase during year.
+We realise from this graph that US Airways does not have any delay info after June. And when we check out the US Airways flight count after June we see that there is no flight. This might be because the company is shutdown, changed name, transformed or just simply we don't have the rest of the years data for this company.
+```{r  }
+ggplot(aes(x=MONTH, y=ARRIVAL_DELAY),
+       data = subset(a_late_flights, !is.na(AIRLINE))) +
+  geom_line(aes(color=AIRLINE), stat='summary', fun.y=mean)  +
+  facet_wrap(~AIRLINE_F, ncol=3) + geom_smooth(method = "lm")
+
+remove(a_late_flights)
+```
+
+.
+
+46. From the below graph we can conclude that:
+    * Delays increase on the 6th & the 2nd months and decrease after those months.Delays       * Has the least values during autumn.
+```{r  }
+ggplot(aes(x=MONTH, y=DEPARTURE_DELAY),
+       data = subset(d_late_flights, !is.na(AIRLINE))) +
+  geom_line(aes(color=AIRLINE), stat='summary', fun.y=mean) +
+  scale_x_continuous(breaks = seq(1,12,1))
+
+remove(d_late_flights)
+```
+
+47. DELAY ANALYSIS BY AIRPORT / STATE / CITY
+
+
+
+Average departure delay based on airport (city, state)
+Get the average departure delay and count of flights by departure airport and its city and state
+```{r}
+departureDelayCity1<-subset(net_flights,net_flights$DEPARTURE_DELAY>0 ) %>%
+  group_by(ORIGIN_AIRPORT,ORIGIN_CITY,ORIGIN_STATE) %>%
+  dplyr::summarise(avg_departure_delay=mean(DEPARTURE_DELAY),count_of_fly=n()) %>%
+  arrange(ORIGIN_AIRPORT)
+```
+
+48. Get count of all flights by departure airport and its city and state
+```{r}
+flightsCity<-net_flights%>%
+  group_by(ORIGIN_AIRPORT,ORIGIN_CITY,ORIGIN_STATE) %>%
+  dplyr::summarise(count_of_fly=n()) %>%
+  arrange(ORIGIN_AIRPORT)
+```
+
+49. Join departure delays and all flight of airports
+```{r}
+departureDelayCity<- sqldf("
+                           select d.ORIGIN_AIRPORT,d.ORIGIN_CITY,f.ORIGIN_STATE,
+                           d.count_of_fly as delay_cnt,
+                           f.count_of_fly as total_cnt,
+                           avg_departure_delay
+                           from departureDelayCity1 as d,flightsCity f
+                           where d.ORIGIN_AIRPORT=f.ORIGIN_AIRPORT
+                           and d.ORIGIN_CITY=f.ORIGIN_CITY
+                           and d.ORIGIN_STATE=f.ORIGIN_STATE
+                           ")
+```
+
+50. Find the departure delay percentages for each airport and filter the airports that have departure delay more than 25%.
+```{r}
+departureDelayCity$percentage<-round(departureDelayCity$delay_cnt/departureDelayCity$total_cnt*100)
+
+mostDelayedAirport<-subset(departureDelayCity, percentage>25)
+```
+
+51. Find the airports of cities that mostDelayAirports in.
+```{r}
+mostDelayedAirportCity <- sqldf("select mostDelayedAirport.ORIGIN_CITY,
+                                mostDelayedAirport.ORIGIN_AIRPORT as MOST_DELAY_AIRP,
+                                departureDelayCity.ORIGIN_AIRPORT as OTHER_AIRP,
+                                mostDelayedAirport.percentage as MOST_DELAY_AIRP_PERCENTAGE,
+                                departureDelayCity.percentage as OTHER_AIRP_PERCENTAGE,
+                                case when departureDelayCity.percentage>25 
+                                then 1 else 0 end as OTHER_AIRP_DELAYED_F
+                                from mostDelayedAirport
+                                join departureDelayCity
+                                where departureDelayCity.ORIGIN_CITY=mostDelayedAirport.ORIGIN_CITY
+                                and mostDelayedAirport.ORIGIN_AIRPORT<>departureDelayCity.ORIGIN_AIRPORT
+                                ") 
+```
+
+### Result
+
+Checking the flight speed
+
+
+1. Flight Speed
+```{r}
+net_flights$flight_speed <- net_flights$DISTANCE / net_flights$AIR_TIME
+```
+
+2. Check out the below graph, Hawaiian Airlines has the lowest average flight speed. The rest of the companies have close airline speed average.
+
+```{r  }
+
+ggplot(net_flights,aes(x=AIRLINE_NAME,y=flight_speed)) +
+  geom_boxplot(aes(fill = AIRLINE_NAME)) +
+  theme(axis.text.x = element_text(angle = 40, hjust = 1))
+```
+
+### Taxi In Time vs Airports
+
+1. Calculate mean of TAXI_IN time at airports
+```{r}
+taxiInAirport<-subset(net_flights,!is.na(net_flights$TAXI_IN)) %>%
+  group_by(DESTINATION_AIRPORT,DESTINATION_CITY,DESTINATION_STATE) %>%
+  dplyr::summarise(mean_taxiIn=mean(TAXI_IN), count_of_fly=n()) %>%
+  arrange(DESTINATION_AIRPORT)
+```
+
+2. There is a strong positive correlation (0.73) between average TAXI IN and NUMBER OF FLIGHTS which sounds rational.
+```{r}
+cor.test(taxiInAirport$mean_taxiIn,taxiInAirport$count_of_fly)
+```
+
+3. We can see this strong correlation on the below graph:
+```{r  }
+ggplot(taxiInAirport,aes(x=mean_taxiIn,y=count_of_fly/100)) +
+  geom_point(color='#66CC99',alpha=0.4) +
+  coord_cartesian(xlim=c(0,7)) +
+  ylab('Count of flight/100') +
+  geom_smooth(linetype=2, color="#0000FF", aes(group=1), se=FALSE)
+```
+
+4. And it's more obvious when we focus on the most dense part of the above graph.
+```{r  }
+ggplot(taxiInAirport,aes(x=mean_taxiIn,y=count_of_fly/100)) +
+  geom_point(color='#66CC99',alpha=0.4) +
+  coord_cartesian(xlim=c(0,7), ylim=c(0,200)) +
+  ylab('Count of flight/100') +
+  geom_smooth(linetype=2, color="#0000FF", aes(group=1), se=FALSE)
+```
+
+5. Since we get a strong relation between taxi in and flight count
+```{r}
+taxiInAirport<-na.omit(taxiInAirport)
+model <- lm((count_of_fly/100)~mean_taxiIn, data = taxiInAirport)
+model
+summary(model)
+```
+
+
+6. Splitting the dataset into training and  testing in 80:20 ratio
+```{r}
+library(car)
+library(moments)
+library(caret)
+library(tidyverse)
+set.seed(123)
+train_samples <- taxiInAirport$count_of_fly%>%
+  createDataPartition(p = 0.8, list = FALSE)
+train_data<-taxiInAirport[train_samples, ]
+test_data<-taxiInAirport[-train_samples, ]
+```
+
+7. Prediction of the chosen model
+```{r}
+pred <- model%>%
+  predict(train_data)
+y_act <- test_data$count_of_fly
+rmse_value<-sqrt(mean(y_act-pred))
+rmse_value
+summary(model)
+```
+
+The RMSE value is 122 which is large but for the dataset which is around 58 lakshs row big , the linearmodel fits well as the r squared value is really very close to zero. 
+
+Hence from this we can infer that the airplanes which take off late increase their speed on air to reach the destination on time, but mostly the arrival delays are caused due to waiting for the taxi space in the runway.
+
+
+
+
